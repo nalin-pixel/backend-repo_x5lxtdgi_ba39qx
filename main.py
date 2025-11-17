@@ -1,6 +1,11 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Any, Dict
+
+from database import create_document
+from schemas import Contactlead
 
 app = FastAPI()
 
@@ -23,7 +28,7 @@ def hello():
 @app.get("/test")
 def test_database():
     """Test endpoint to check if database is available and accessible"""
-    response = {
+    response: Dict[str, Any] = {
         "backend": "✅ Running",
         "database": "❌ Not Available",
         "database_url": None,
@@ -63,6 +68,17 @@ def test_database():
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+
+@app.post("/api/contact")
+def create_contact_lead(payload: Contactlead):
+    """Capture contact form submissions and persist to MongoDB"""
+    try:
+        lead_dict = payload.model_dump()
+        inserted_id = create_document("contactlead", lead_dict)
+        return {"status": "ok", "id": inserted_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
