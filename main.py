@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import logging
 import json
 import requests
@@ -143,6 +143,39 @@ def send_email_via_smtp(to_email: str, subject: str, html_content: str) -> bool:
         return False
 
 
+def send_notification(to_email: str, subject: str, html: str) -> bool:
+    """Try SendGrid first, then SMTP."""
+    if os.getenv("SENDGRID_API_KEY"):
+        ok = send_email_via_sendgrid(to_email, subject, html)
+        if ok:
+            return True
+    if os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"):
+        return send_email_via_smtp(to_email, subject, html)
+    logger.warning("No email provider configured. Set SENDGRID_API_KEY or SMTP_* env vars to enable emails.")
+    return False
+
+
+class EmailTest(BaseModel):
+    to: Optional[str] = None
+
+
+@app.post("/api/email/test")
+def email_test(body: EmailTest):
+    """Send a test email to verify provider configuration."""
+    to_email = body.to or os.getenv("EMAIL_TO", "arslan.rai2662@gmail.com")
+    subject = "Test: Email configuration"
+    html = """
+    <h2>Email Test</h2>
+    <p>If you're seeing this, your email provider is configured correctly.</p>
+    <p>Source: Backend test endpoint.</p>
+    """
+    try:
+        ok = send_notification(to_email, subject, html)
+        return {"ok": ok, "to": to_email}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/contact")
 def create_contact_lead(payload: Contactlead):
     """Capture contact form submissions and persist to MongoDB; then email notification."""
@@ -162,14 +195,7 @@ def create_contact_lead(payload: Contactlead):
         <p><em>Lead ID:</em> {inserted_id}</p>
         """
 
-        email_sent = False
-        # Prefer SendGrid if key provided, else SMTP
-        if os.getenv("SENDGRID_API_KEY"):
-            email_sent = send_email_via_sendgrid(to_email, subject, html)
-        elif os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"):
-            email_sent = send_email_via_smtp(to_email, subject, html)
-        else:
-            logger.warning("No email provider configured. Set SENDGRID_API_KEY or SMTP_* env vars to enable emails.")
+        email_sent = send_notification(to_email, subject, html)
 
         return {"status": "ok", "id": inserted_id, "email_sent": email_sent}
     except Exception as e:
